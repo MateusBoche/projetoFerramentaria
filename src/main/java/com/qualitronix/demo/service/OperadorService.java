@@ -33,7 +33,7 @@ public class OperadorService {
         // Verifica se já existe outro operador logado com sessão ativa
         Optional<Operador> operadorLogado = operadorRepository.findAll()
                 .stream()
-                .filter(o -> Boolean.TRUE.equals(o.isLogado()))
+                .filter(Operador::isLogado)
                 .filter(o -> o.getSessaoExpiraEm() != null && o.getSessaoExpiraEm().isAfter(LocalDateTime.now()))
                 .findFirst();
 
@@ -61,7 +61,7 @@ public class OperadorService {
 
         Operador operador = operadorOpt.get();
 
-        if (!Boolean.TRUE.equals(operador.getLogado())) {
+        if (!operador.isLogado()) {
             return "Operador não está logado!";
         }
 
