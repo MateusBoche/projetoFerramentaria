@@ -61,12 +61,13 @@ public class OperadorService {
 
         Operador operador = operadorOpt.get();
 
-        if (!operador.isLogado()) {
+        // Bloqueia logout se operador não estiver logado
+        if (!Boolean.TRUE.equals(operador.isLogado())) {
             return "Operador não está logado!";
         }
 
         operador.setLogado(false);
-        operador.setSessaoExpiraEm(null);
+        operador.setSessaoExpiraEm(null); // Limpa expiração
         operadorRepository.save(operador);
 
         return "Logout realizado com sucesso! Operador: " + operador.getNome();
