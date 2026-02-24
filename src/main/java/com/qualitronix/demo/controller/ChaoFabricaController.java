@@ -1,6 +1,7 @@
 package com.qualitronix.demo.controller;
 
 import com.qualitronix.demo.service.ChaoFabricaService;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -14,34 +15,20 @@ public class ChaoFabricaController {
     }
 
     // -----------------------------
-    // 1️⃣ Bipe operador
-    // -----------------------------
-    @PostMapping("/operador")
-    public String scanOperador(@RequestParam String qr) {
-        return chaoFabricaService.scanOperador(qr);
-    }
-
-    // -----------------------------
-    // 2️⃣ Bipe OP (start/pause)
+    // 1️⃣ Bipe da OP (start/pause)
     // -----------------------------
     @PostMapping("/op")
-    public String scanOp(@RequestParam String qrOp, @RequestParam String matricula) {
-        return chaoFabricaService.scanOrdemProducao(qrOp, matricula);
+    public String scanOp(@RequestParam String qrOp, HttpSession session) {
+        return chaoFabricaService.scanExecucao(qrOp, session);
     }
 
     // -----------------------------
-    // 3️⃣ Finalizar OP
+    // 2️⃣ Fechamento da OP
     // -----------------------------
     @PostMapping("/op/finalizar")
-    public String finalizarOp(@RequestParam String qrOp, @RequestParam String matricula) {
-        return chaoFabricaService.finalizarOrdemProducao(qrOp, matricula);
+    public String finalizarOp(@RequestParam String qrOpFechamento, HttpSession session) {
+        return chaoFabricaService.scanFechamento(qrOpFechamento, session);
     }
 
     // -----------------------------
-// 0️⃣ Cadastro de operador
-// -----------------------------
-    @PostMapping("/operador/cadastrar")
-    public String cadastrarOperador(@RequestParam String nome) {
-        return chaoFabricaService.cadastrarOperador(nome);
-    }
 }

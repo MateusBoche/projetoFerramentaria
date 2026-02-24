@@ -1,6 +1,7 @@
 package com.qualitronix.demo.controller;
 
 import com.qualitronix.demo.service.OperadorService;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -13,15 +14,12 @@ public class OperadorController {
         this.operadorService = operadorService;
     }
 
-    // Login do operador via código de barras
-    @PostMapping("/login")
-    public String login(@RequestParam String codigoBarra) {
-        return operadorService.loginOperador(codigoBarra);
-    }
-
-    // Logout do operador
-    @PostMapping("/logout")
-    public String logout(@RequestParam String codigoBarra) {
-        return operadorService.logoutOperador(codigoBarra);
+    // -----------------------------
+    // Scan do operador (primeiro bip LOGA, segundo bip DESLOGA)
+    // Guarda operador na sessão para usar nas OPs
+    // -----------------------------
+    @PostMapping("/scan")
+    public String scanOperador(@RequestParam String codigoBarra, HttpSession session) {
+        return operadorService.scanOperador(codigoBarra, session);
     }
 }

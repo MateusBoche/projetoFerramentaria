@@ -3,6 +3,7 @@ package com.qualitronix.demo.service;
 import com.qualitronix.demo.model.Maquina;
 import com.qualitronix.demo.model.OrdemProducao;
 import com.qualitronix.demo.model.Produto;
+import com.qualitronix.demo.model.StatusOrdemProducao;
 import com.qualitronix.demo.repository.MaquinaRepository;
 import com.qualitronix.demo.repository.OrdemProducaoRepository;
 import com.qualitronix.demo.repository.ProdutoRepository;
@@ -38,14 +39,25 @@ public class OrdemProducaoService {
         op.setMaquina(maquinaOpt.get());
         op.setQuantidade(quantidade);
 
-        // gera código numérico único automático (timestamp + 3 números aleatórios)
-        String codigoBarra = gerarCodigoAutomatico();
-        op.setQrCode(codigoBarra);  // mantém o campo qrCode, mas agora é numérico
+        // 🔹 QR de execução (start / pause)
+        String codigoExecucao = gerarCodigoAutomatico();
+
+        // 🔒 QR de fechamento
+        String codigoFechamento = gerarCodigoAutomatico();
+
+        op.setQrCode(codigoExecucao);
+        op.setQrCodeFechamento(codigoFechamento);
+
         op.setDataCriacao(LocalDateTime.now());
+        op.setStatus(StatusOrdemProducao.ABERTA);
 
         opRepository.save(op);
 
-        return "Ordem de Produção criada com sucesso! Código: " + codigoBarra;
+        return """
+        Ordem de Produção criada com sucesso!
+        QR Execução: %s
+        QR Fechamento: %s
+        """.formatted(codigoExecucao, codigoFechamento);
     }
 
     private String gerarCodigoAutomatico() {

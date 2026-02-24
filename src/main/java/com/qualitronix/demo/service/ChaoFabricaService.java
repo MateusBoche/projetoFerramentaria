@@ -1,14 +1,18 @@
 package com.qualitronix.demo.service;
 
-import com.qualitronix.demo.model.*;
-import com.qualitronix.demo.repository.*;
+import com.qualitronix.demo.model.Apontamento;
+import com.qualitronix.demo.model.Operador;
+import com.qualitronix.demo.model.OrdemProducao;
+import com.qualitronix.demo.model.StatusApontamento;
+import com.qualitronix.demo.model.StatusOrdemProducao;
+import com.qualitronix.demo.repository.ApontamentoRepository;
+import com.qualitronix.demo.repository.OperadorRepository;
+import com.qualitronix.demo.repository.OrdemProducaoRepository;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -18,9 +22,6 @@ public class ChaoFabricaService {
     private final OrdemProducaoRepository opRepository;
     private final ApontamentoRepository apontamentoRepository;
 
-    // Sessões ativas: operadorId -> timestamp da última bipagem
-    private final Map<Long, Instant> operadorSessao = new HashMap<>();
-
     public ChaoFabricaService(OperadorRepository operadorRepository,
                               OrdemProducaoRepository opRepository,
                               ApontamentoRepository apontamentoRepository) {
@@ -29,114 +30,100 @@ public class ChaoFabricaService {
         this.apontamentoRepository = apontamentoRepository;
     }
 
-    // -----------------------------
-    // 1️⃣ Scan do operador (inicia sessão 5 min)
-    // -----------------------------
-    public String scanOperador(String matricula) {
-        Optional<Operador> op = operadorRepository.findByMatricula(matricula);
-        if (op.isEmpty()) return "Operador não encontrado";
+    // =====================================================
+    // 🔁 QR DE EXECUÇÃO (START / PAUSE)
+    // =====================================================
+    public String scanExecucao(String qrCodeExecucao, HttpSession session) {
 
-        operadorSessao.put(op.get().getId(), Instant.now());
-        return "Sessão iniciada para operador " + op.get().getNome() + " (válida 5 minutos)";
-    }
-
-    // -----------------------------
-    // 2️⃣ Scan da OP (start/pause/finalizar)
-    // -----------------------------
-    public String scanOrdemProducao(String qrOp, String matricula) {
-        // valida operador
-        Optional<Operador> operadorOpt = operadorRepository.findByMatricula(matricula);
-        if (operadorOpt.isEmpty()) return "Operador não encontrado";
-
-        Operador operador = operadorOpt.get();
-
-        // valida sessão
-        Instant inicioSessao = operadorSessao.get(operador.getId());
-        if (inicioSessao == null || Instant.now().isAfter(inicioSessao.plusSeconds(300))) {
-            return "Sessão expirada. Bipe novamente o QR do operador.";
+        Operador operador = (Operador) session.getAttribute("OPERADOR_LOGADO");
+        if (operador == null) {
+            throw new RuntimeException("Nenhum operador logado!");
         }
 
-        // valida OP
-        Optional<OrdemProducao> opOpt = opRepository.findByQrCode(qrOp);
-        if (opOpt.isEmpty()) return "OP não encontrada";
+        OrdemProducao op = opRepository.findByQrCode(qrCodeExecucao)
+                .orElseThrow(() -> new RuntimeException("OP não encontrada"));
 
-        OrdemProducao op = opOpt.get();
+        if (op.getStatus() == StatusOrdemProducao.FINALIZADA) {
+            return "OP já está finalizada";
+        }
 
-        // pega último apontamento
-        Apontamento ultimoApontamento = apontamentoRepository
-                .findTopByOrdemProducaoOrderByDataHoraDesc(op)
-                .orElse(null);
+        // 🔒 verifica se OP está INICIADA por outro operador
+        if (op.getStatus() == StatusOrdemProducao.INICIADA && !op.getOperadorAtual().equals(operador)) {
+            return "OP já está em execução por outro operador!";
+        }
 
-        // lógica start/pause
-        if (ultimoApontamento == null || ultimoApontamento.getStatus() == StatusApontamento.PAUSADO) {
-            // start
-            Apontamento a = new Apontamento(null, operador, op, Instant.now(), StatusApontamento.INICIADO);
+        // ⏸️ PAUSE → só operadorAtual pode pausar
+        if (op.getStatus() == StatusOrdemProducao.INICIADA && op.getOperadorAtual().equals(operador)) {
+            Optional<Apontamento> apontamentoAbertoOpt =
+                    apontamentoRepository.findByOrdemProducaoAndStatus(op, StatusApontamento.INICIADO);
+
+            apontamentoAbertoOpt.ifPresent(a -> {
+                a.setFim(Instant.now());
+                a.setDuracaoSegundos(a.getFim().getEpochSecond() - a.getDataHora().getEpochSecond());
+                a.setStatus(StatusApontamento.FINALIZADO);
+                apontamentoRepository.save(a);
+            });
+
+            op.setStatus(StatusOrdemProducao.ABERTA);
+            op.setOperadorAtual(null);
+            opRepository.save(op);
+
+            return "Apontamento pausado pelo operador " + operador.getNome();
+        }
+
+        // ▶️ START → inicia apontamento
+        Apontamento novo = new Apontamento();
+        novo.setOperador(operador);
+        novo.setOrdemProducao(op);
+        novo.setDataHora(Instant.now());
+        novo.setStatus(StatusApontamento.INICIADO);
+        apontamentoRepository.save(novo);
+
+        op.setStatus(StatusOrdemProducao.INICIADA);
+        op.setOperadorAtual(operador);
+        opRepository.save(op);
+
+        return "Apontamento iniciado pelo operador " + operador.getNome();
+    }
+
+    // =====================================================
+    // 🔒 QR DE FECHAMENTO DA OP
+    // =====================================================
+    public String scanFechamento(String qrCodeFechamento, HttpSession session) {
+
+        Operador operador = (Operador) session.getAttribute("OPERADOR_LOGADO");
+        if (operador == null) {
+            throw new RuntimeException("Nenhum operador logado!");
+        }
+
+        OrdemProducao op = opRepository.findByQrCodeFechamento(qrCodeFechamento)
+                .orElseThrow(() -> new RuntimeException("QR de fechamento inválido"));
+
+        if (op.getStatus() == StatusOrdemProducao.FINALIZADA) {
+            return "OP já está finalizada";
+        }
+
+        // 🔒 só operadorAtual pode fechar
+        if (!operador.equals(op.getOperadorAtual())) {
+            return "Somente o operador que iniciou a OP pode fechar!";
+        }
+
+        // finaliza apontamento aberto
+        Optional<Apontamento> apontamentoAbertoOpt =
+                apontamentoRepository.findByOrdemProducaoAndStatus(op, StatusApontamento.INICIADO);
+
+        apontamentoAbertoOpt.ifPresent(a -> {
+            a.setFim(Instant.now());
+            a.setDuracaoSegundos(a.getFim().getEpochSecond() - a.getDataHora().getEpochSecond());
+            a.setStatus(StatusApontamento.FINALIZADO);
             apontamentoRepository.save(a);
-            return "OP " + op.getId() + " iniciada";
-        } else if (ultimoApontamento.getStatus() == StatusApontamento.INICIADO) {
-            // pause
-            Apontamento a = new Apontamento(null, operador, op, Instant.now(), StatusApontamento.PAUSADO);
-            apontamentoRepository.save(a);
-            return "OP " + op.getId() + " pausada";
-        }
+        });
 
-        return "Ação inválida";
-    }
+        op.setStatus(StatusOrdemProducao.FINALIZADA);
+        op.setDataFechamento(LocalDateTime.now());
+        op.setOperadorAtual(null);
+        opRepository.save(op);
 
-    // -----------------------------
-    // 3️⃣ Finalizar OP
-    // -----------------------------
-    public String finalizarOrdemProducao(String qrOp, String matricula) {
-        // valida operador
-        Optional<Operador> operadorOpt = operadorRepository.findByMatricula(matricula);
-        if (operadorOpt.isEmpty()) return "Operador não encontrado";
-
-        Operador operador = operadorOpt.get();
-
-        // valida sessão
-        Instant inicioSessao = operadorSessao.get(operador.getId());
-        if (inicioSessao == null || Instant.now().isAfter(inicioSessao.plusSeconds(300))) {
-            return "Sessão expirada. Bipe novamente o QR do operador.";
-        }
-
-        // valida OP
-        Optional<OrdemProducao> opOpt = opRepository.findByQrCode(qrOp);
-        if (opOpt.isEmpty()) return "OP não encontrada";
-
-        OrdemProducao op = opOpt.get();
-
-        // cria apontamento de finalização
-        Apontamento a = new Apontamento(null, operador, op, Instant.now(), StatusApontamento.FINALIZADO);
-        apontamentoRepository.save(a);
-
-        return "OP " + op.getId() + " finalizada";
-    }
-
-
-    public String cadastrarOperador(String nome) {
-        // Gera matrícula automática (timestamp + 3 números aleatórios)
-        String matricula = gerarMatriculaAutomatica();
-
-        // Verifica se a matrícula já existe (precaução)
-        Optional<Operador> opExistente = operadorRepository.findByMatricula(matricula);
-        if (opExistente.isPresent()) {
-            return "Erro: matrícula gerada já existe! Tente novamente.";
-        }
-
-        // Criar e salvar operador
-        Operador operador = new Operador();
-        operador.setNome(nome);
-        operador.setMatricula(matricula);
-
-        operadorRepository.save(operador);
-
-        return "Operador cadastrado com sucesso! Matrícula: " + matricula;
-    }
-
-    // Função para gerar matrícula automática
-    private String gerarMatriculaAutomatica() {
-        long timestamp = System.currentTimeMillis();
-        int random = (int) (Math.random() * 900) + 100; // 100 a 999
-        return String.valueOf(timestamp) + random;
+        return "OP finalizada com sucesso pelo operador " + operador.getNome();
     }
 }

@@ -14,7 +14,13 @@ public class OrdemProducao {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String qrCode; // QR da OP
+    // QR usado para START / PAUSE
+    @Column(nullable = false, unique = true)
+    private String qrCode;
+
+    // QR exclusivo para FECHAMENTO
+    @Column(nullable = false, unique = true)
+    private String qrCodeFechamento;
 
     @ManyToOne
     private Produto produto;
@@ -24,5 +30,15 @@ public class OrdemProducao {
 
     private int quantidade;
 
-    private LocalDateTime dataCriacao; // Data de criação da OP
+    private LocalDateTime dataCriacao;
+
+    private LocalDateTime dataFechamento;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private StatusOrdemProducao status = StatusOrdemProducao.ABERTA;
+
+    // Controle de execução por operador
+    @ManyToOne
+    private Operador operadorAtual; // operador que iniciou o apontamento
 }

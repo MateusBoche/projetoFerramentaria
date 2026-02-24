@@ -9,4 +9,5 @@ import java.util.Optional;
 @Repository
 public interface OrdemProducaoRepository extends JpaRepository<OrdemProducao, Long> {
     Optional<OrdemProducao> findByQrCode(String qrCode);
+    Optional<OrdemProducao> findByQrCodeFechamento(String qrCodeFechamento);
 }
