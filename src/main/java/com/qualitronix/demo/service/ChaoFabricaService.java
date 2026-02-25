@@ -43,17 +43,18 @@ public class ChaoFabricaService {
         OrdemProducao op = opRepository.findByQrCode(qrCodeExecucao)
                 .orElseThrow(() -> new RuntimeException("OP não encontrada"));
 
+        // OP já finalizada → nada a fazer
         if (op.getStatus() == StatusOrdemProducao.FINALIZADA) {
             return "OP já está finalizada";
         }
 
-        // 🔒 verifica se OP está INICIADA por outro operador
-        if (op.getStatus() == StatusOrdemProducao.INICIADA && !op.getOperadorAtual().equals(operador)) {
-            return "OP já está em execução por outro operador!";
+        // 🔒 OP iniciada por outro operador → bloqueia
+        if (op.getStatus() == StatusOrdemProducao.INICIADA && !operador.equals(op.getOperadorAtual())) {
+            return "OP já está em execução por outro operador! Bloqueada.";
         }
 
-        // ⏸️ PAUSE → só operadorAtual pode pausar
-        if (op.getStatus() == StatusOrdemProducao.INICIADA && op.getOperadorAtual().equals(operador)) {
+        // ⏸️ PAUSE → só operador atual pode pausar
+        if (op.getStatus() == StatusOrdemProducao.INICIADA && operador.equals(op.getOperadorAtual())) {
             Optional<Apontamento> apontamentoAbertoOpt =
                     apontamentoRepository.findByOrdemProducaoAndStatus(op, StatusApontamento.INICIADO);
 
@@ -65,25 +66,29 @@ public class ChaoFabricaService {
             });
 
             op.setStatus(StatusOrdemProducao.ABERTA);
-            op.setOperadorAtual(null);
+            op.setOperadorAtual(null); // libera OP para START futuro
             opRepository.save(op);
 
             return "Apontamento pausado pelo operador " + operador.getNome();
         }
 
-        // ▶️ START → inicia apontamento
-        Apontamento novo = new Apontamento();
-        novo.setOperador(operador);
-        novo.setOrdemProducao(op);
-        novo.setDataHora(Instant.now());
-        novo.setStatus(StatusApontamento.INICIADO);
-        apontamentoRepository.save(novo);
+        // ▶️ START → inicia apontamento se OP estiver ABERTA
+        if (op.getStatus() == StatusOrdemProducao.ABERTA) {
+            Apontamento novo = new Apontamento();
+            novo.setOperador(operador);
+            novo.setOrdemProducao(op);
+            novo.setDataHora(Instant.now());
+            novo.setStatus(StatusApontamento.INICIADO);
+            apontamentoRepository.save(novo);
 
-        op.setStatus(StatusOrdemProducao.INICIADA);
-        op.setOperadorAtual(operador);
-        opRepository.save(op);
+            op.setStatus(StatusOrdemProducao.INICIADA);
+            op.setOperadorAtual(operador);
+            opRepository.save(op);
 
-        return "Apontamento iniciado pelo operador " + operador.getNome();
+            return "Apontamento iniciado pelo operador " + operador.getNome();
+        }
+
+        return "Erro inesperado ao processar OP!";
     }
 
     // =====================================================
@@ -121,7 +126,7 @@ public class ChaoFabricaService {
 
         op.setStatus(StatusOrdemProducao.FINALIZADA);
         op.setDataFechamento(LocalDateTime.now());
-        op.setOperadorAtual(null);
+        op.setOperadorAtual(null); // libera OP completamente
         opRepository.save(op);
 
         return "OP finalizada com sucesso pelo operador " + operador.getNome();
