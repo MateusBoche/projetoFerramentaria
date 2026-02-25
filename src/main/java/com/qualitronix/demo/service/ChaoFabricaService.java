@@ -1,12 +1,7 @@
 package com.qualitronix.demo.service;
 
-import com.qualitronix.demo.model.Apontamento;
-import com.qualitronix.demo.model.Operador;
-import com.qualitronix.demo.model.OrdemProducao;
-import com.qualitronix.demo.model.StatusApontamento;
-import com.qualitronix.demo.model.StatusOrdemProducao;
+import com.qualitronix.demo.model.*;
 import com.qualitronix.demo.repository.ApontamentoRepository;
-import com.qualitronix.demo.repository.OperadorRepository;
 import com.qualitronix.demo.repository.OrdemProducaoRepository;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.stereotype.Service;
@@ -18,117 +13,162 @@ import java.util.Optional;
 @Service
 public class ChaoFabricaService {
 
-    private final OperadorRepository operadorRepository;
     private final OrdemProducaoRepository opRepository;
     private final ApontamentoRepository apontamentoRepository;
+    private final OperadorService operadorService;
 
-    public ChaoFabricaService(OperadorRepository operadorRepository,
-                              OrdemProducaoRepository opRepository,
-                              ApontamentoRepository apontamentoRepository) {
-        this.operadorRepository = operadorRepository;
+    public ChaoFabricaService(OrdemProducaoRepository opRepository,
+                              ApontamentoRepository apontamentoRepository,
+                              OperadorService operadorService) {
         this.opRepository = opRepository;
         this.apontamentoRepository = apontamentoRepository;
+        this.operadorService = operadorService;
     }
 
     // =====================================================
-    // 🔁 QR DE EXECUÇÃO (START / PAUSE)
+    // 🔁 QR DE EXECUÇÃO (START / PAUSE / RESUME)
     // =====================================================
     public String scanExecucao(String qrCodeExecucao, HttpSession session) {
 
-        Operador operador = (Operador) session.getAttribute("OPERADOR_LOGADO");
-        if (operador == null) {
-            throw new RuntimeException("Nenhum operador logado!");
-        }
+        Operador operadorSessao =
+                operadorService.getOperadorLogado(session);
 
         OrdemProducao op = opRepository.findByQrCode(qrCodeExecucao)
                 .orElseThrow(() -> new RuntimeException("OP não encontrada"));
 
-        // OP já finalizada → nada a fazer
         if (op.getStatus() == StatusOrdemProducao.FINALIZADA) {
             return "OP já está finalizada";
         }
 
-        // 🔒 OP iniciada por outro operador → bloqueia
-        if (op.getStatus() == StatusOrdemProducao.INICIADA && !operador.equals(op.getOperadorAtual())) {
-            return "OP já está em execução por outro operador! Bloqueada.";
-        }
-
-        // ⏸️ PAUSE → só operador atual pode pausar
-        if (op.getStatus() == StatusOrdemProducao.INICIADA && operador.equals(op.getOperadorAtual())) {
-            Optional<Apontamento> apontamentoAbertoOpt =
-                    apontamentoRepository.findByOrdemProducaoAndStatus(op, StatusApontamento.INICIADO);
-
-            apontamentoAbertoOpt.ifPresent(a -> {
-                a.setFim(Instant.now());
-                a.setDuracaoSegundos(a.getFim().getEpochSecond() - a.getDataHora().getEpochSecond());
-                a.setStatus(StatusApontamento.FINALIZADO);
-                apontamentoRepository.save(a);
-            });
-
-            op.setStatus(StatusOrdemProducao.ABERTA);
-            op.setOperadorAtual(null); // libera OP para START futuro
-            opRepository.save(op);
-
-            return "Apontamento pausado pelo operador " + operador.getNome();
-        }
-
-        // ▶️ START → inicia apontamento se OP estiver ABERTA
+        // =====================================================
+        // ▶️ START — OP ABERTA
+        // =====================================================
         if (op.getStatus() == StatusOrdemProducao.ABERTA) {
+
+            if (operadorSessao == null) {
+                return "Bipe o QR do operador antes de iniciar a OP";
+            }
+
             Apontamento novo = new Apontamento();
-            novo.setOperador(operador);
+            novo.setOperador(operadorSessao);
             novo.setOrdemProducao(op);
             novo.setDataHora(Instant.now());
             novo.setStatus(StatusApontamento.INICIADO);
             apontamentoRepository.save(novo);
 
             op.setStatus(StatusOrdemProducao.INICIADA);
-            op.setOperadorAtual(operador);
+            op.setOperadorAtual(operadorSessao);
             opRepository.save(op);
 
-            return "Apontamento iniciado pelo operador " + operador.getNome();
+            // 🔴 LOGOUT REAL
+            operadorService.logoutOperador(session);
+
+            return "OP iniciada com sucesso";
         }
 
-        return "Erro inesperado ao processar OP!";
+        // =====================================================
+        // ⏯️ PAUSE / RESUME — OP INICIADA
+        // =====================================================
+        if (op.getStatus() == StatusOrdemProducao.INICIADA) {
+
+            if (operadorSessao == null) {
+                return "Bipe o QR do operador para pausar ou retomar a OP";
+            }
+
+            if (!operadorSessao.getId().equals(op.getOperadorAtual().getId())) {
+                return "Somente o operador atual pode pausar ou retomar a OP";
+            }
+
+            Optional<Apontamento> apontamentoAtivo =
+                    apontamentoRepository
+                            .findTopByOrdemProducaoAndOperadorAndStatusOrderByDataHoraDesc(
+                                    op,
+                                    operadorSessao,
+                                    StatusApontamento.INICIADO
+                            );
+
+            // ⏸️ PAUSE
+            if (apontamentoAtivo.isPresent()) {
+
+                Apontamento a = apontamentoAtivo.get();
+                a.setFim(Instant.now());
+                a.setDuracaoSegundos(
+                        a.getFim().getEpochSecond()
+                                - a.getDataHora().getEpochSecond()
+                );
+                a.setStatus(StatusApontamento.PAUSADO);
+                apontamentoRepository.save(a);
+
+                // 🔴 LOGOUT REAL
+                operadorService.logoutOperador(session);
+
+                return "Apontamento pausado";
+            }
+
+            // ▶️ RESUME
+            Apontamento novo = new Apontamento();
+            novo.setOperador(operadorSessao);
+            novo.setOrdemProducao(op);
+            novo.setDataHora(Instant.now());
+            novo.setStatus(StatusApontamento.INICIADO);
+            apontamentoRepository.save(novo);
+
+            // 🔴 LOGOUT REAL
+            operadorService.logoutOperador(session);
+
+            return "Apontamento retomado";
+        }
+
+        return "Ação não permitida";
     }
 
     // =====================================================
-    // 🔒 QR DE FECHAMENTO DA OP
+    // 🔒 QR DE FECHAMENTO
     // =====================================================
     public String scanFechamento(String qrCodeFechamento, HttpSession session) {
 
-        Operador operador = (Operador) session.getAttribute("OPERADOR_LOGADO");
-        if (operador == null) {
-            throw new RuntimeException("Nenhum operador logado!");
+        Operador operadorSessao =
+                operadorService.getOperadorLogado(session);
+
+        if (operadorSessao == null) {
+            return "Bipe o QR do operador para finalizar a OP";
         }
 
         OrdemProducao op = opRepository.findByQrCodeFechamento(qrCodeFechamento)
-                .orElseThrow(() -> new RuntimeException("QR de fechamento inválido"));
+                .orElseThrow(() -> new RuntimeException("QR inválido"));
 
         if (op.getStatus() == StatusOrdemProducao.FINALIZADA) {
             return "OP já está finalizada";
         }
 
-        // 🔒 só operadorAtual pode fechar
-        if (!operador.equals(op.getOperadorAtual())) {
-            return "Somente o operador que iniciou a OP pode fechar!";
+        if (!operadorSessao.getId().equals(op.getOperadorAtual().getId())) {
+            return "Somente o operador atual pode finalizar a OP";
         }
 
-        // finaliza apontamento aberto
-        Optional<Apontamento> apontamentoAbertoOpt =
-                apontamentoRepository.findByOrdemProducaoAndStatus(op, StatusApontamento.INICIADO);
-
-        apontamentoAbertoOpt.ifPresent(a -> {
-            a.setFim(Instant.now());
-            a.setDuracaoSegundos(a.getFim().getEpochSecond() - a.getDataHora().getEpochSecond());
-            a.setStatus(StatusApontamento.FINALIZADO);
-            apontamentoRepository.save(a);
-        });
+        apontamentoRepository
+                .findTopByOrdemProducaoAndOperadorAndStatusOrderByDataHoraDesc(
+                        op,
+                        operadorSessao,
+                        StatusApontamento.INICIADO
+                )
+                .ifPresent(a -> {
+                    a.setFim(Instant.now());
+                    a.setDuracaoSegundos(
+                            a.getFim().getEpochSecond()
+                                    - a.getDataHora().getEpochSecond()
+                    );
+                    a.setStatus(StatusApontamento.FINALIZADO);
+                    apontamentoRepository.save(a);
+                });
 
         op.setStatus(StatusOrdemProducao.FINALIZADA);
         op.setDataFechamento(LocalDateTime.now());
-        op.setOperadorAtual(null); // libera OP completamente
+        op.setOperadorAtual(null);
         opRepository.save(op);
 
-        return "OP finalizada com sucesso pelo operador " + operador.getNome();
+        // 🔴 LOGOUT REAL
+        operadorService.logoutOperador(session);
+
+        return "OP finalizada com sucesso";
     }
 }

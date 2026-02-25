@@ -2,12 +2,11 @@ package com.qualitronix.demo.service;
 
 import com.qualitronix.demo.model.Operador;
 import com.qualitronix.demo.repository.OperadorRepository;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
-
-import jakarta.servlet.http.HttpSession;
 
 @Service
 public class OperadorService {
@@ -20,53 +19,67 @@ public class OperadorService {
     }
 
     /**
-     * Scan do operador (primeiro bip LOGA, segundo bip DESLOGA)
-     * e guarda na sessão para uso nas OPs
+     * Scan do operador
+     * - Primeiro bip → LOGA
+     * - Segundo bip → DESLOGA
      */
     public String scanOperador(String codigoBarra, HttpSession session) {
-        Optional<Operador> operadorOpt = operadorRepository.findByMatricula(codigoBarra);
-        if (operadorOpt.isEmpty()) {
-            return "Operador não encontrado! Código inválido.";
-        }
 
-        Operador operador = operadorOpt.get();
+        Operador operador = operadorRepository.findByMatricula(codigoBarra)
+                .orElseThrow(() -> new RuntimeException("Operador não encontrado"));
+
         LocalDateTime agora = LocalDateTime.now();
 
-        // Verifica se já existe algum operador logado ativo
         Optional<Operador> operadorAtivo = operadorRepository.findAll().stream()
                 .filter(o -> Boolean.TRUE.equals(o.isLogado()))
                 .filter(o -> o.getSessaoExpiraEm() != null && o.getSessaoExpiraEm().isAfter(agora))
                 .findFirst();
 
-        // ✅ Se o mesmo operador já está logado → desloga
-        if (operadorAtivo.isPresent() && operadorAtivo.get().getId().equals(operador.getId())) {
+        // 🔁 MESMO OPERADOR → DESLOGA
+        if (operadorAtivo.isPresent()
+                && operadorAtivo.get().getId().equals(operador.getId())) {
+
             operador.setLogado(false);
             operador.setSessaoExpiraEm(null);
             operadorRepository.save(operador);
 
             session.removeAttribute("OPERADOR_LOGADO");
+
             return "Operador " + operador.getNome() + " DESLOGADO";
         }
 
-        // ✅ Se outro operador está logado → bloqueia
-        if (operadorAtivo.isPresent() && !operadorAtivo.get().getId().equals(operador.getId())) {
-            return "Outro operador já está logado! Aguarde a sessão liberar.";
+        // 🚫 OUTRO OPERADOR ATIVO
+        if (operadorAtivo.isPresent()) {
+            return "Outro operador já está logado! Aguarde.";
         }
 
-        // 🔹 Nenhum operador ativo → loga o operador
+        // ✅ LOGA
         operador.setLogado(true);
         operador.setSessaoExpiraEm(agora.plusMinutes(DURACAO_SESSAO_MIN));
         operadorRepository.save(operador);
 
-        // Guarda na sessão
         session.setAttribute("OPERADOR_LOGADO", operador);
 
-        return "Operador " + operador.getNome() + " LOGADO (sessão 5 minutos)";
+        return "Operador " + operador.getNome() + " LOGADO";
     }
 
     /**
-     * Retorna operador logado da sessão
+     * 🔑 Logout FORÇADO (usado pela OP)
      */
+    public void logoutOperador(HttpSession session) {
+
+        Operador operadorSessao =
+                (Operador) session.getAttribute("OPERADOR_LOGADO");
+
+        if (operadorSessao != null) {
+            operadorSessao.setLogado(false);
+            operadorSessao.setSessaoExpiraEm(null);
+            operadorRepository.save(operadorSessao);
+
+            session.removeAttribute("OPERADOR_LOGADO");
+        }
+    }
+
     public Operador getOperadorLogado(HttpSession session) {
         return (Operador) session.getAttribute("OPERADOR_LOGADO");
     }
