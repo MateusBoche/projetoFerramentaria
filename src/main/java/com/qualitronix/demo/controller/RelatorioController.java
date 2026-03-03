@@ -46,6 +46,7 @@ public class RelatorioController {
     // =====================================================
 // Relatório de tempo detalhado por operador
 // =====================================================
+
     @GetMapping("/tempo/operador/detalhado")
     public List<TempoPorOperadorDetalhadoDTO> tempoPorOperadorDetalhado() {
         return relatorioService.getTempoPorOperadorDetalhado();

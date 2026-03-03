@@ -4,6 +4,7 @@ import com.qualitronix.demo.model.Maquina;
 import com.qualitronix.demo.repository.MaquinaRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -15,26 +16,53 @@ public class MaquinaService {
         this.maquinaRepository = maquinaRepository;
     }
 
-    public String cadastrarMaquina(String nome) {
-        // Gera um código numérico único automático
+    /* ================= CREATE ================= */
+    public Maquina cadastrarMaquina(String nome) {
         String codigoQr = gerarCodigoAutomatico();
 
-        // Verifica se já existe (por precaução)
         Optional<Maquina> existe = maquinaRepository.findByCodigoQr(codigoQr);
-        if (existe.isPresent()) return "Erro: código gerado já existe! Tente novamente.";
+        if (existe.isPresent())
+            throw new RuntimeException("Erro: código gerado já existe! Tente novamente.");
 
         Maquina m = new Maquina();
         m.setNome(nome);
         m.setCodigoQr(codigoQr);
-        maquinaRepository.save(m);
-
-        return "Máquina cadastrada com sucesso! Código: " + codigoQr;
+        return maquinaRepository.save(m); // ✅ retorna a máquina criada
     }
 
+    /* ================= READ ================= */
+
+    // Listar todas
+    public List<Maquina> listarMaquinas() {
+        return maquinaRepository.findAll();
+    }
+
+    // Buscar por ID
+    public Optional<Maquina> buscarPorId(Long id) {
+        return maquinaRepository.findById(id);
+    }
+
+    /* ================= UPDATE ================= */
+    public Maquina editarMaquina(Long id, String novoNome) {
+        Maquina maquina = maquinaRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Máquina não encontrada."));
+
+        maquina.setNome(novoNome);
+        return maquinaRepository.save(maquina); // ✅ retorna a máquina atualizada
+    }
+
+    /* ================= DELETE ================= */
+    public void excluirMaquina(Long id) {
+        if (!maquinaRepository.existsById(id))
+            throw new RuntimeException("Máquina não encontrada.");
+
+        maquinaRepository.deleteById(id);
+    }
+
+    /* ================= UTIL ================= */
     private String gerarCodigoAutomatico() {
-        // Usa timestamp + 3 números aleatórios para garantir unicidade
         long timestamp = System.currentTimeMillis();
-        int random = (int) (Math.random() * 900) + 100; // 100 a 999
+        int random = (int) (Math.random() * 900) + 100;
         return String.valueOf(timestamp) + random;
     }
 }
